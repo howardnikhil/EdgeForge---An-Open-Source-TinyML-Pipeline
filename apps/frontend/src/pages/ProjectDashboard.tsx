@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { formatExperimentMetric, detectTaskType, formatAccuracy, formatR2 } from '../utils/metrics';
 
 export default function ProjectDashboard() {
   const { currentProject, datasets, experiments, models, loadProjectData } = useAppStore();
@@ -11,10 +12,35 @@ export default function ProjectDashboard() {
   }, [currentProject?.id]);
 
   const completedExps = experiments.filter(e => e.status === 'completed');
-  const bestAccuracy = completedExps.reduce((best, e) => {
-    const acc = e.metrics?.accuracy ?? 0;
-    return acc > best ? acc : best;
-  }, 0);
+
+  const classExps = completedExps.filter(e => detectTaskType(e) === 'classification');
+  const regExps = completedExps.filter(e => detectTaskType(e) === 'regression');
+
+  // Best classification accuracy
+  let bestClassAcc: number | null = null;
+  for (const exp of classExps) {
+    const formatted = formatExperimentMetric(exp);
+    if (formatted.raw !== null) {
+      if (bestClassAcc === null || formatted.raw > bestClassAcc) {
+        bestClassAcc = formatted.raw;
+      }
+    }
+  }
+
+  // Best regression R²
+  let bestRegR2: number | null = null;
+  for (const exp of regExps) {
+    const formatted = formatExperimentMetric(exp);
+    if (formatted.raw !== null) {
+      if (bestRegR2 === null || formatted.raw > bestRegR2) {
+        bestRegR2 = formatted.raw;
+      }
+    }
+  }
+
+  const hasClass = classExps.length > 0;
+  const hasReg = regExps.length > 0;
+  const isMixed = hasClass && hasReg;
 
   return (
     <div>
@@ -42,12 +68,38 @@ export default function ProjectDashboard() {
           <div className="stat-card__label">Models</div>
           <div className="stat-card__value">{models.length}</div>
         </div>
-        <div className="stat-card">
-          <div className="stat-card__label">Best Accuracy</div>
-          <div className="stat-card__value" style={{ color: bestAccuracy > 0 ? 'var(--accent-success)' : 'var(--text-muted)' }}>
-            {bestAccuracy > 0 ? `${(bestAccuracy * 100).toFixed(1)}%` : '—'}
+
+        {/* Task-Aware Best Metric Cards */}
+        {isMixed ? (
+          <>
+            <div className="stat-card">
+              <div className="stat-card__label">BEST CLASSIFICATION ACCURACY</div>
+              <div className="stat-card__value" style={{ color: bestClassAcc !== null ? 'var(--accent-success)' : 'var(--text-muted)' }}>
+                {formatAccuracy(bestClassAcc)}
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-card__label">BEST REGRESSION R²</div>
+              <div className="stat-card__value" style={{ color: bestRegR2 !== null ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
+                {formatR2(bestRegR2)}
+              </div>
+            </div>
+          </>
+        ) : hasReg ? (
+          <div className="stat-card">
+            <div className="stat-card__label">BEST TEST R²</div>
+            <div className="stat-card__value" style={{ color: bestRegR2 !== null ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
+              {formatR2(bestRegR2)}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="stat-card">
+            <div className="stat-card__label">BEST TEST ACCURACY</div>
+            <div className="stat-card__value" style={{ color: bestClassAcc !== null ? 'var(--accent-success)' : 'var(--text-muted)' }}>
+              {formatAccuracy(bestClassAcc)}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Recent experiments */}
@@ -62,31 +114,38 @@ export default function ProjectDashboard() {
                 <tr>
                   <th>Algorithm</th>
                   <th>Status</th>
-                  <th>Accuracy</th>
+                  <th>Test Metric</th>
                   <th>Model Size</th>
                   <th>Duration</th>
                   <th>Created</th>
                 </tr>
               </thead>
               <tbody>
-                {completedExps.slice(0, 10).map((exp) => (
-                  <tr key={exp.id}>
-                    <td style={{ fontWeight: 500 }}>{exp.algorithm}</td>
-                    <td><span className={`badge badge--${exp.status === 'completed' ? 'success' : exp.status === 'failed' ? 'error' : 'warning'}`}>{exp.status}</span></td>
-                    <td style={{ fontFamily: 'var(--font-mono)' }}>
-                      {exp.metrics?.accuracy ? `${(exp.metrics.accuracy * 100).toFixed(2)}%` : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {exp.model_size_bytes ? formatBytes(exp.model_size_bytes) : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {exp.duration_seconds ? `${exp.duration_seconds.toFixed(1)}s` : '—'}
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      {new Date(exp.created_at).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                {completedExps.slice(0, 10).map((exp) => {
+                  const metricInfo = formatExperimentMetric(exp);
+                  return (
+                    <tr key={exp.id}>
+                      <td style={{ fontWeight: 500 }}>{exp.algorithm}</td>
+                      <td>
+                        <span className={`badge badge--${exp.status === 'completed' ? 'success' : exp.status === 'failed' ? 'error' : 'warning'}`}>
+                          {exp.status}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)' }}>
+                        {metricInfo.value}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {exp.model_size_bytes ? formatBytes(exp.model_size_bytes) : '—'}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {exp.duration_seconds ? `${exp.duration_seconds.toFixed(1)}s` : '—'}
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        {new Date(exp.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

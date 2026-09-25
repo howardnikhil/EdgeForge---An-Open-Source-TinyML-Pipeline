@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/appStore';
 import api from '../utils/api';
+import { formatExperimentMetric } from '../utils/metrics';
 import { Cpu, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 
 export default function HardwarePage() {
@@ -53,7 +54,7 @@ export default function HardwarePage() {
             <select className="select" style={{ maxWidth: 400 }} value={selectedExpId} onChange={(e) => { setSelectedExpId(e.target.value); setCompatibility(null); }}>
               {completedExps.map(e => (
                 <option key={e.id} value={e.id}>
-                  {e.algorithm} — {e.metrics?.accuracy ? `${(e.metrics.accuracy*100).toFixed(1)}%` : ''} — {formatBytes(e.model_size_bytes || 0)}
+                  {e.algorithm} — {formatExperimentMetric(e).value} — {formatBytes(e.model_size_bytes || 0)}
                 </option>
               ))}
             </select>

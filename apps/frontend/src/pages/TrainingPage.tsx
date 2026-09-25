@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
 import api from '../utils/api';
+import { formatExperimentMetric } from '../utils/metrics';
 import { Play, Wand2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 const ALGORITHMS = [
@@ -427,40 +428,37 @@ export default function TrainingPage() {
                   <th>Status</th>
                   <th>{autoMLResult.summary.dataset_analysis?.detected_task === 'regression' ? 'Test R²' : 'Test Accuracy'}</th>
                   <th>{autoMLResult.summary.dataset_analysis?.detected_task === 'regression' ? 'CV R²' : 'CV Accuracy'}</th>
-                  <th>F1 Score</th>
+                  <th>{autoMLResult.summary.dataset_analysis?.detected_task === 'regression' ? 'RMSE' : 'F1 Score'}</th>
                   <th>Model Size</th>
                   <th>Duration</th>
                 </tr>
               </thead>
               <tbody>
-                {autoMLResult.results.map((r: any, i: number) => (
-                  <tr key={i}>
-                    <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{i + 1}</td>
-                    <td style={{ fontWeight: 500 }}>{r.algorithm}</td>
-                    <td><span className={`badge badge--${r.status === 'completed' ? 'success' : 'error'}`}>{r.status}</span></td>
-                    <td style={{ fontFamily: 'var(--font-mono)' }}>
-                      {r.metrics?.test_accuracy !== undefined
-                        ? `${(r.metrics.test_accuracy * 100).toFixed(1)}%`
-                        : (r.metrics?.r2 !== undefined ? r.metrics.r2.toFixed(3) : '—')}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {r.metrics?.cv_accuracy_mean !== undefined
-                        ? `${(r.metrics.cv_accuracy_mean * 100).toFixed(1)}% ± ${(r.metrics.cv_accuracy_std * 100).toFixed(1)}%`
-                        : (r.metrics?.cv_r2_mean !== undefined ? `${r.metrics.cv_r2_mean.toFixed(3)} ± ${r.metrics.cv_r2_std.toFixed(3)}` : 'N/A')}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)' }}>
-                      {r.metrics?.f1_score !== undefined
-                        ? `${(r.metrics.f1_score * 100).toFixed(1)}%`
-                        : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {r.model_size_bytes ? formatBytes(r.model_size_bytes) : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {r.duration_seconds ? `${r.duration_seconds.toFixed(2)}s` : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {autoMLResult.results.map((r: any, i: number) => {
+                  const mInfo = formatExperimentMetric(r);
+                  return (
+                    <tr key={i}>
+                      <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{i + 1}</td>
+                      <td style={{ fontWeight: 500 }}>{r.algorithm}</td>
+                      <td><span className={`badge badge--${r.status === 'completed' ? 'success' : 'error'}`}>{r.status}</span></td>
+                      <td style={{ fontFamily: 'var(--font-mono)' }}>
+                        {mInfo.value}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {mInfo.cvValue}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)' }}>
+                        {mInfo.secondaryValue || '—'}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {r.model_size_bytes ? formatBytes(r.model_size_bytes) : '—'}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {r.duration_seconds ? `${r.duration_seconds.toFixed(2)}s` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

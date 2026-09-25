@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
 import api from '../utils/api';
+import { formatExperimentMetric } from '../utils/metrics';
 import { Code } from 'lucide-react';
 
 export default function FirmwarePage() {
@@ -48,7 +49,7 @@ export default function FirmwarePage() {
               <select className="select" value={expId} onChange={(e) => setExpId(e.target.value)}>
                 {completedExps.map(e => (
                   <option key={e.id} value={e.id}>
-                    {e.algorithm} — {e.metrics?.accuracy ? `${(e.metrics.accuracy*100).toFixed(1)}%` : ''} — {formatBytes(e.model_size_bytes||0)}
+                    {e.algorithm} — {formatExperimentMetric(e).value} — {formatBytes(e.model_size_bytes||0)}
                   </option>
                 ))}
               </select>

@@ -3,12 +3,18 @@ import { useAppStore } from '../stores/appStore';
 import api from '../utils/api';
 import { Download, Trash2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import {
+  detectTaskType,
+  formatExperimentMetric,
+  prepareChartData,
+} from '../utils/metrics';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4'];
 
 export default function ExperimentsPage() {
   const { currentProject, experiments, addLog, loadProjectData, setInspectorData } = useAppStore();
   const [selected, setSelected] = useState<any>(null);
+  const [taskFilter, setTaskFilter] = useState<'all' | 'classification' | 'regression'>('all');
 
   useEffect(() => {
     if (currentProject?.id) loadProjectData(currentProject.id);
@@ -55,58 +61,89 @@ export default function ExperimentsPage() {
   };
 
   const completed = experiments.filter(e => e.status === 'completed');
+  const classCount = completed.filter(e => detectTaskType(e) === 'classification').length;
+  const regCount = completed.filter(e => detectTaskType(e) === 'regression').length;
 
-  const getMetricValue = (exp: any): number => {
-    const m = exp.metrics;
-    if (!m) return 0;
-    if (m.accuracy !== undefined) return m.accuracy * 100;
-    if (m.r2_score !== undefined) return m.r2_score * 100;
-    if (m.r2 !== undefined) return m.r2 * 100;
-    return 0;
+  // Prepared data points
+  const classChartData = prepareChartData(completed, 'classification');
+  const regChartData = prepareChartData(completed, 'regression');
+
+  // Filtered experiment table list
+  const filteredExperiments = experiments.filter(e => {
+    if (taskFilter === 'all') return true;
+    return detectTaskType(e) === taskFilter;
+  });
+
+  // Domain calculation for Regression R² chart
+  const getRegressionDomain = (data: any[]): [number, number] => {
+    if (data.length === 0) return [0, 1];
+    const scores = data.map(d => d.score);
+    const minS = Math.min(...scores);
+    const maxS = Math.max(...scores);
+    const pad = Math.abs(maxS - minS) * 0.15 || 0.2;
+    const lower = minS < 0 ? Math.floor((minS - pad) * 10) / 10 : 0;
+    const upper = Math.min(1.0, Math.ceil((maxS + pad) * 10) / 10);
+    return [lower, upper];
   };
-
-  const getMetricLabel = (exp: any): string => {
-    const m = exp.metrics;
-    if (!m) return '—';
-    if (m.accuracy !== undefined) return `${(m.accuracy * 100).toFixed(2)}%`;
-    if (m.r2_score !== undefined) return `R² ${(m.r2_score * 100).toFixed(2)}%`;
-    if (m.r2 !== undefined) return `R² ${(m.r2 * 100).toFixed(2)}%`;
-    return '—';
-  };
-
-  const isAnyRegression = completed.some(e => e.task_type === 'regression' || e.metrics?.r2_score !== undefined || e.metrics?.r2 !== undefined);
-  const chartMetricLabel = isAnyRegression ? 'Score' : 'Accuracy';
-
-  const comparisonData = completed.map(e => ({
-    name: e.algorithm,
-    score: getMetricValue(e),
-    size: e.model_size_bytes ?? 0,
-  }));
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1 className="page-title">Experiments</h1>
-          <p className="page-subtitle">{experiments.length} experiments · {completed.length} completed</p>
+          <p className="page-subtitle">
+            {experiments.length} experiments · {completed.length} completed
+            {classCount > 0 && regCount > 0 && ` (${classCount} classification, ${regCount} regression)`}
+          </p>
         </div>
+
+        {/* Task Filter Toolbar */}
+        {(classCount > 0 && regCount > 0) && (
+          <div style={{ display: 'flex', gap: 6, background: 'var(--bg-elevated)', padding: 4, borderRadius: 8, border: '1px solid var(--border-primary)' }}>
+            <button
+              className={`btn btn--sm ${taskFilter === 'all' ? 'btn--primary' : 'btn--ghost'}`}
+              onClick={() => setTaskFilter('all')}
+            >
+              All Tasks ({experiments.length})
+            </button>
+            <button
+              className={`btn btn--sm ${taskFilter === 'classification' ? 'btn--primary' : 'btn--ghost'}`}
+              onClick={() => setTaskFilter('classification')}
+            >
+              Classification ({classCount})
+            </button>
+            <button
+              className={`btn btn--sm ${taskFilter === 'regression' ? 'btn--primary' : 'btn--ghost'}`}
+              onClick={() => setTaskFilter('regression')}
+            >
+              Regression ({regCount})
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Accuracy comparison chart */}
-      {comparisonData.length > 1 && (
+      {/* Classification Chart */}
+      {(taskFilter === 'all' || taskFilter === 'classification') && classChartData.length > 0 && (
         <div className="card" style={{ marginBottom: 24 }}>
-          <div className="card__header"><span className="card__title">Model Comparison — {chartMetricLabel}</span></div>
-          <div className="card__body" style={{ height: 200 }}>
+          <div className="card__header">
+            <span className="card__title">Model Comparison — Test Accuracy</span>
+          </div>
+          <div className="card__body" style={{ height: 220 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={comparisonData}>
+              <BarChart data={classChartData}>
                 <XAxis dataKey="name" fontSize={11} stroke="var(--text-muted)" />
-                <YAxis fontSize={11} stroke="var(--text-muted)" domain={[0, 100]} />
+                <YAxis
+                  fontSize={11}
+                  stroke="var(--text-muted)"
+                  domain={[0, 100]}
+                  unit="%"
+                />
                 <Tooltip
                   contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-secondary)', borderRadius: 6, fontSize: 12 }}
-                  formatter={(v: any) => `${typeof v === 'number' ? v.toFixed(2) : v}%`}
+                  formatter={(value: any) => [`${typeof value === 'number' ? value.toFixed(2) : value}%`, 'Test Accuracy']}
                 />
                 <Bar dataKey="score" radius={[4, 4, 0, 0]}>
-                  {comparisonData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  {classChartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -114,33 +151,91 @@ export default function ExperimentsPage() {
         </div>
       )}
 
+      {/* Regression Chart */}
+      {(taskFilter === 'all' || taskFilter === 'regression') && regChartData.length > 0 && (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div className="card__header">
+            <span className="card__title">Model Comparison — Test R²</span>
+          </div>
+          <div className="card__body" style={{ height: 220 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={regChartData}>
+                <XAxis dataKey="name" fontSize={11} stroke="var(--text-muted)" />
+                <YAxis
+                  fontSize={11}
+                  stroke="var(--text-muted)"
+                  domain={getRegressionDomain(regChartData)}
+                />
+                <Tooltip
+                  contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-secondary)', borderRadius: 6, fontSize: 12 }}
+                  formatter={(_val: any, _, item: any) => [item.payload.displayValue, 'Test R²']}
+                />
+                <Bar dataKey="score" radius={[4, 4, 0, 0]}>
+                  {regChartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Empty Chart Message if filter has no valid evaluation metrics */}
+      {completed.length > 0 && classChartData.length === 0 && regChartData.length === 0 && (
+        <div className="card" style={{ marginBottom: 24, padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
+          No evaluation metrics available for the selected experiments.
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 1fr' : '1fr', gap: 24 }}>
         {/* Experiment list */}
         <div className="card">
-          <div className="card__header"><span className="card__title">All Experiments</span></div>
+          <div className="card__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span className="card__title">All Experiments</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{filteredExperiments.length} items</span>
+          </div>
           <div className="table-container" style={{ maxHeight: 500, overflow: 'auto' }}>
             <table>
               <thead>
-                <tr><th>Algorithm</th><th>Status</th><th>{isAnyRegression ? 'Score' : 'Accuracy'}</th><th>Size</th><th></th></tr>
+                <tr>
+                  <th>Algorithm</th>
+                  <th>Status</th>
+                  <th>Test Metric</th>
+                  <th>CV Metric</th>
+                  <th>Size</th>
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
-                {experiments.map((exp) => (
-                  <tr key={exp.id} onClick={() => selectExperiment(exp)} style={{ cursor: 'pointer' }}>
-                    <td style={{ fontWeight: 500 }}>{exp.algorithm}</td>
-                    <td><span className={`badge badge--${exp.status === 'completed' ? 'success' : exp.status === 'failed' ? 'error' : 'warning'}`}>{exp.status}</span></td>
-                    <td style={{ fontFamily: 'var(--font-mono)' }}>
-                      {getMetricLabel(exp)}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {exp.model_size_bytes ? formatBytes(exp.model_size_bytes) : '—'}
-                    </td>
-                    <td>
-                      <button className="btn btn--ghost btn--sm" onClick={(e) => { e.stopPropagation(); deleteExp(exp.id); }}>
-                        <Trash2 size={12} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredExperiments.map((exp) => {
+                  const metricInfo = formatExperimentMetric(exp);
+                  return (
+                    <tr key={exp.id} onClick={() => selectExperiment(exp)} style={{ cursor: 'pointer' }}>
+                      <td style={{ fontWeight: 500 }}>
+                        {exp.algorithm}
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 6 }}>({metricInfo.taskType})</span>
+                      </td>
+                      <td>
+                        <span className={`badge badge--${exp.status === 'completed' ? 'success' : exp.status === 'failed' ? 'error' : 'warning'}`}>
+                          {exp.status}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)' }}>
+                        {metricInfo.value}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
+                        {metricInfo.cvValue}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {exp.model_size_bytes ? formatBytes(exp.model_size_bytes) : '—'}
+                      </td>
+                      <td>
+                        <button className="btn btn--ghost btn--sm" onClick={(e) => { e.stopPropagation(); deleteExp(exp.id); }}>
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -155,34 +250,40 @@ export default function ExperimentsPage() {
                 <span className={`badge badge--${selected.status === 'completed' ? 'success' : 'error'}`}>{selected.status}</span>
               </div>
               <div className="card__body">
-                <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 16 }}>
-                  {selected.metrics?.accuracy !== undefined && (
-                    <div className="stat-card">
-                      <div className="stat-card__label">Accuracy</div>
-                      <div className="stat-card__value" style={{ fontSize: 20, color: 'var(--accent-success)' }}>
-                        {(selected.metrics.accuracy * 100).toFixed(2)}%
+                {(() => {
+                  const selMetric = formatExperimentMetric(selected);
+                  return (
+                    <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 16 }}>
+                      <div className="stat-card">
+                        <div className="stat-card__label">{selMetric.label}</div>
+                        <div className="stat-card__value" style={{ fontSize: 20, color: 'var(--accent-success)' }}>
+                          {selMetric.value}
+                        </div>
+                      </div>
+
+                      {selMetric.secondaryLabel && selMetric.secondaryValue && (
+                        <div className="stat-card">
+                          <div className="stat-card__label">{selMetric.secondaryLabel}</div>
+                          <div className="stat-card__value" style={{ fontSize: 20 }}>
+                            {selMetric.secondaryValue}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="stat-card">
+                        <div className="stat-card__label">Duration</div>
+                        <div className="stat-card__value" style={{ fontSize: 16 }}>
+                          {selected.duration_seconds ? `${selected.duration_seconds.toFixed(2)}s` : '—'}
+                        </div>
                       </div>
                     </div>
-                  )}
-                  {selected.metrics?.f1_score !== undefined && (
-                    <div className="stat-card">
-                      <div className="stat-card__label">F1 Score</div>
-                      <div className="stat-card__value" style={{ fontSize: 20 }}>
-                        {(selected.metrics.f1_score * 100).toFixed(2)}%
-                      </div>
-                    </div>
-                  )}
-                  <div className="stat-card">
-                    <div className="stat-card__label">Duration</div>
-                    <div className="stat-card__value" style={{ fontSize: 16 }}>
-                      {selected.duration_seconds?.toFixed(2)}s
-                    </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 <div className="separator" />
 
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  <div style={{ marginBottom: 4 }}><strong>Task Type:</strong> {detectTaskType(selected)}</div>
                   <div style={{ marginBottom: 4 }}><strong>Framework:</strong> {selected.framework} {selected.framework_version}</div>
                   <div style={{ marginBottom: 4 }}><strong>Seed:</strong> {selected.seed}</div>
                   <div style={{ marginBottom: 4 }}><strong>Input Shape:</strong> [{selected.input_shape?.join(', ')}]</div>
