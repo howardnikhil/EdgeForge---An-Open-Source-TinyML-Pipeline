@@ -55,9 +55,31 @@ export default function ExperimentsPage() {
   };
 
   const completed = experiments.filter(e => e.status === 'completed');
+
+  const getMetricValue = (exp: any): number => {
+    const m = exp.metrics;
+    if (!m) return 0;
+    if (m.accuracy !== undefined) return m.accuracy * 100;
+    if (m.r2_score !== undefined) return m.r2_score * 100;
+    if (m.r2 !== undefined) return m.r2 * 100;
+    return 0;
+  };
+
+  const getMetricLabel = (exp: any): string => {
+    const m = exp.metrics;
+    if (!m) return '—';
+    if (m.accuracy !== undefined) return `${(m.accuracy * 100).toFixed(2)}%`;
+    if (m.r2_score !== undefined) return `R² ${(m.r2_score * 100).toFixed(2)}%`;
+    if (m.r2 !== undefined) return `R² ${(m.r2 * 100).toFixed(2)}%`;
+    return '—';
+  };
+
+  const isAnyRegression = completed.some(e => e.task_type === 'regression' || e.metrics?.r2_score !== undefined || e.metrics?.r2 !== undefined);
+  const chartMetricLabel = isAnyRegression ? 'Score' : 'Accuracy';
+
   const comparisonData = completed.map(e => ({
     name: e.algorithm,
-    accuracy: (e.metrics?.accuracy ?? 0) * 100,
+    score: getMetricValue(e),
     size: e.model_size_bytes ?? 0,
   }));
 
@@ -73,7 +95,7 @@ export default function ExperimentsPage() {
       {/* Accuracy comparison chart */}
       {comparisonData.length > 1 && (
         <div className="card" style={{ marginBottom: 24 }}>
-          <div className="card__header"><span className="card__title">Model Comparison — Accuracy</span></div>
+          <div className="card__header"><span className="card__title">Model Comparison — {chartMetricLabel}</span></div>
           <div className="card__body" style={{ height: 200 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={comparisonData}>
@@ -83,7 +105,7 @@ export default function ExperimentsPage() {
                   contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-secondary)', borderRadius: 6, fontSize: 12 }}
                   formatter={(v: any) => `${typeof v === 'number' ? v.toFixed(2) : v}%`}
                 />
-                <Bar dataKey="accuracy" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="score" radius={[4, 4, 0, 0]}>
                   {comparisonData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                 </Bar>
               </BarChart>
@@ -99,7 +121,7 @@ export default function ExperimentsPage() {
           <div className="table-container" style={{ maxHeight: 500, overflow: 'auto' }}>
             <table>
               <thead>
-                <tr><th>Algorithm</th><th>Status</th><th>Accuracy</th><th>Size</th><th></th></tr>
+                <tr><th>Algorithm</th><th>Status</th><th>{isAnyRegression ? 'Score' : 'Accuracy'}</th><th>Size</th><th></th></tr>
               </thead>
               <tbody>
                 {experiments.map((exp) => (
@@ -107,7 +129,7 @@ export default function ExperimentsPage() {
                     <td style={{ fontWeight: 500 }}>{exp.algorithm}</td>
                     <td><span className={`badge badge--${exp.status === 'completed' ? 'success' : exp.status === 'failed' ? 'error' : 'warning'}`}>{exp.status}</span></td>
                     <td style={{ fontFamily: 'var(--font-mono)' }}>
-                      {exp.metrics?.accuracy ? `${(exp.metrics.accuracy * 100).toFixed(2)}%` : '—'}
+                      {getMetricLabel(exp)}
                     </td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                       {exp.model_size_bytes ? formatBytes(exp.model_size_bytes) : '—'}

@@ -8,8 +8,18 @@ import json
 import numpy as np
 
 
+def _unwrap_estimator(model):
+    """Unwrap underlying scikit-learn estimator if wrapped inside a Pipeline."""
+    if hasattr(model, "named_steps") and "model" in model.named_steps:
+        return model.named_steps["model"]
+    if hasattr(model, "steps") and len(model.steps) > 0:
+        return model.steps[-1][1]
+    return model
+
+
 def generate_c_decision_tree(tree, feature_names=None, class_labels=None) -> str:
     """Generate C function for a single DecisionTreeClassifier."""
+    tree = _unwrap_estimator(tree)
     tree_ = tree.tree_
     n_nodes = tree_.node_count
     n_classes = tree_.value.shape[2] if len(tree_.value.shape) == 3 else 1
@@ -58,6 +68,7 @@ def generate_c_decision_tree(tree, feature_names=None, class_labels=None) -> str
 
 def generate_c_random_forest(model, feature_names=None, class_labels=None) -> str:
     """Generate C function for a RandomForestClassifier."""
+    model = _unwrap_estimator(model)
     estimators = model.estimators_
     n_estimators = len(estimators)
     n_features = model.n_features_in_
@@ -141,6 +152,8 @@ def generate_embedded_firmware_project(
     os.makedirs(os.path.join(output_dir, "src"), exist_ok=True)
     os.makedirs(os.path.join(output_dir, "include"), exist_ok=True)
     
+    model = _unwrap_estimator(model)
+
     if algorithm in ("decision_tree", "random_forest"):
         if hasattr(model, "estimators_"):
             inference_c = generate_c_random_forest(model, class_labels=class_labels)

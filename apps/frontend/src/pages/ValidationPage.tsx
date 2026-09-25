@@ -58,7 +58,7 @@ export default function ValidationPage() {
 
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card__header"><span className="card__title">Validation Configuration</span></div>
-        <div className="card__body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 16, alignItems: 'end' }}>
+        <div className="card__body" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16, alignItems: 'end' }}>
           <div>
             <label className="form-label">Trained Model</label>
             <select className="form-select" value={expId} onChange={e => setExpId(e.target.value)}>
@@ -93,7 +93,7 @@ export default function ValidationPage() {
       {report && (
         <div>
           {/* Top Comparative KPI Metrics */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
             <div className="card" style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Agreement Rate</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: report.agreement_rate >= 95 ? 'var(--accent-success)' : 'var(--accent-warning)' }}>

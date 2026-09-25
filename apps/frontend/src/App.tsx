@@ -16,6 +16,7 @@ import ValidationPage from './pages/ValidationPage';
 import SettingsPage from './pages/SettingsPage';
 import AIAssistantPage from './pages/AIAssistantPage';
 import SerialPage from './pages/SerialPage';
+import ErrorBoundary from './components/ErrorBoundary';
 import './App.css';
 
 function App() {
@@ -55,7 +56,9 @@ function App() {
         {currentProject && <Sidebar />}
         <div className="main-content">
           <div className="workspace">
-            {renderMainContent()}
+            <ErrorBoundary fallbackTitle={`Error rendering ${activeView} page`}>
+              {renderMainContent()}
+            </ErrorBoundary>
           </div>
           {currentProject && <BottomPanel />}
         </div>

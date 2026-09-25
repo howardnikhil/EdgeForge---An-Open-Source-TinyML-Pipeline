@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_session
 from models.db_models import Dataset, Project
 
+from core.ml_validation import inspect_dataset_target
+
 router = APIRouter()
 
 
@@ -40,15 +42,23 @@ class LabelUpdate(BaseModel):
 async def list_datasets(project_id: str, session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(Dataset).where(Dataset.project_id == project_id))
     datasets = result.scalars().all()
-    return [
-        {
+    res = []
+    for d in datasets:
+        target_info = {}
+        if os.path.exists(d.path):
+            try:
+                df = pd.read_csv(d.path, nrows=100)
+                target_info = inspect_dataset_target(df)
+            except Exception:
+                pass
+        res.append({
             "id": d.id, "name": d.name, "version": d.version,
             "dataset_type": d.dataset_type, "num_samples": d.num_samples,
             "num_classes": d.num_classes, "class_labels": d.class_labels,
             "statistics": d.statistics, "created_at": d.created_at.isoformat(),
-        }
-        for d in datasets
-    ]
+            "target_info": target_info,
+        })
+    return res
 
 
 @router.post("/import-csv")
@@ -88,8 +98,9 @@ async def import_csv(
     raw_path = os.path.join(raw_dir, f"{name}.csv")
     df.to_csv(raw_path, index=False)
 
-    # Compute statistics
+    # Compute statistics & target info
     stats = _compute_statistics(df)
+    target_info = inspect_dataset_target(df)
 
     # Detect classes if 'label' column exists
     class_labels = {}
@@ -116,6 +127,7 @@ async def import_csv(
         "id": dataset.id, "name": dataset.name, "num_samples": dataset.num_samples,
         "num_classes": num_classes, "class_labels": class_labels,
         "statistics": stats, "columns": list(df.columns),
+        "target_info": target_info,
     }
 
 
@@ -126,18 +138,23 @@ async def get_dataset(dataset_id: str, session: AsyncSession = Depends(get_sessi
     if not dataset:
         raise HTTPException(404, "Dataset not found")
 
-    # Load preview data
+    # Load preview data & target info
     preview = []
+    target_info = {}
+    cols = []
     if os.path.exists(dataset.path):
-        df = pd.read_csv(dataset.path, nrows=100)
-        preview = df.to_dict(orient="records")
+        df_full = pd.read_csv(dataset.path)
+        preview = df_full.head(100).to_dict(orient="records")
+        target_info = inspect_dataset_target(df_full)
+        cols = list(df_full.columns)
 
     return {
         "id": dataset.id, "name": dataset.name, "version": dataset.version,
         "dataset_type": dataset.dataset_type, "num_samples": dataset.num_samples,
         "num_classes": dataset.num_classes, "class_labels": dataset.class_labels,
         "statistics": dataset.statistics, "preview": preview,
-        "columns": list(pd.read_csv(dataset.path, nrows=0).columns) if os.path.exists(dataset.path) else [],
+        "columns": cols,
+        "target_info": target_info,
     }
 
 

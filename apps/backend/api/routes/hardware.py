@@ -225,20 +225,41 @@ async def check_compatibility(
                 "remedies": [r],
             })
 
+    flash_breakdown = analysis["breakdown"]["flash"]
+    ram_breakdown = analysis["breakdown"]["ram"]
+
     return {
-        "hardware": hw.name,
-        "architecture": hw.architecture,
-        "experiment": exp.name,
-        "algorithm": exp.algorithm,
+        "hardware": {
+            "name": hw.name,
+            "architecture": hw.architecture,
+        },
+        "experiment": {
+            "name": exp.name,
+            "algorithm": exp.algorithm,
+        },
         "compatible": analysis["compatible"],
         "issues": issues,
-        "detailed_breakdown": analysis["breakdown"],
         "remediations": analysis["remediations"],
-        "flash_ok": analysis["breakdown"]["flash"]["required_bytes"] <= hw.flash_bytes,
-        "ram_ok": analysis["breakdown"]["ram"]["required_bytes"] <= hw.ram_bytes,
+        "flash": {
+            "ok": flash_breakdown["required_bytes"] <= hw.flash_bytes,
+            "usage_percent": round(flash_breakdown["used_percentage"], 1),
+            "model_bytes": exp.model_size_bytes,
+            "total_bytes": hw.flash_bytes,
+            "required_bytes": flash_breakdown["required_bytes"],
+            "sdk_base_bytes": flash_breakdown["sdk_base_bytes"],
+            "runtime_code_bytes": flash_breakdown["runtime_code_bytes"],
+        },
+        "ram": {
+            "ok": ram_breakdown["required_bytes"] <= hw.ram_bytes,
+            "estimated_bytes": ram_breakdown["required_bytes"],
+            "total_bytes": hw.ram_bytes,
+            "available_bytes": hw.ram_bytes - ram_breakdown["required_bytes"],
+            "stack_bytes": ram_breakdown["stack_bytes"],
+            "heap_bytes": ram_breakdown["heap_bytes"],
+            "tensor_arena_bytes": ram_breakdown["tensor_arena_bytes"],
+            "note": "Estimated — actual heap usage depends on runtime and SDK." if ram_breakdown["used_percentage"] > 60 else None,
+        },
         "model_size_bytes": exp.model_size_bytes,
-        "flash_total": hw.flash_bytes,
-        "ram_total": hw.ram_bytes,
     }
 
 

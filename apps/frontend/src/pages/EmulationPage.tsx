@@ -64,7 +64,7 @@ export default function EmulationPage() {
 
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card__header"><span className="card__title">Emulation & Sensor Replay Configuration</span></div>
-        <div className="card__body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 16, alignItems: 'end' }}>
+        <div className="card__body" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16, alignItems: 'end' }}>
           <div>
             <label className="form-label">Trained Experiment</label>
             <select className="form-select" value={expId} onChange={e => setExpId(e.target.value)}>
