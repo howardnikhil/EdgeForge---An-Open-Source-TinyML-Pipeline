@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../stores/appStore';
 import api from '../utils/api';
-import { Download, Trash2 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { Download, Trash2, AlertTriangle, Info } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import {
   detectTaskType,
   formatExperimentMetric,
@@ -64,19 +64,16 @@ export default function ExperimentsPage() {
   const classCount = completed.filter(e => detectTaskType(e) === 'classification').length;
   const regCount = completed.filter(e => detectTaskType(e) === 'regression').length;
 
-  // Prepared data points
   const classChartData = prepareChartData(completed, 'classification');
   const regChartData = prepareChartData(completed, 'regression');
 
-  // Filtered experiment table list
   const filteredExperiments = experiments.filter(e => {
     if (taskFilter === 'all') return true;
     return detectTaskType(e) === taskFilter;
   });
 
-  // Domain calculation for Regression R² chart
   const getRegressionDomain = (data: any[]): [number, number] => {
-    if (data.length === 0) return [0, 1];
+    if (data.length === 0) return [-0.5, 1.0];
     const scores = data.map(d => d.score);
     const minS = Math.min(...scores);
     const maxS = Math.max(...scores);
@@ -140,7 +137,7 @@ export default function ExperimentsPage() {
                 />
                 <Tooltip
                   contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-secondary)', borderRadius: 6, fontSize: 12 }}
-                  formatter={(value: any) => [`${typeof value === 'number' ? value.toFixed(2) : value}%`, 'Test Accuracy']}
+                  formatter={(_val: any, _, item: any) => [`${item.payload.displayValue}`, 'Test Accuracy']}
                 />
                 <Bar dataKey="score" radius={[4, 4, 0, 0]}>
                   {classChartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
@@ -154,8 +151,9 @@ export default function ExperimentsPage() {
       {/* Regression Chart */}
       {(taskFilter === 'all' || taskFilter === 'regression') && regChartData.length > 0 && (
         <div className="card" style={{ marginBottom: 24 }}>
-          <div className="card__header">
+          <div className="card__header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span className="card__title">Model Comparison — Test R²</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Baseline: Mean Predictor (R² = 0.000)</span>
           </div>
           <div className="card__body" style={{ height: 220 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -166,12 +164,20 @@ export default function ExperimentsPage() {
                   stroke="var(--text-muted)"
                   domain={getRegressionDomain(regChartData)}
                 />
+                <ReferenceLine
+                  y={0}
+                  stroke="#f59e0b"
+                  strokeDasharray="3 3"
+                  label={{ value: 'Mean Baseline (R²=0)', fill: 'var(--text-muted)', fontSize: 10, position: 'insideTopRight' }}
+                />
                 <Tooltip
                   contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-secondary)', borderRadius: 6, fontSize: 12 }}
-                  formatter={(_val: any, _, item: any) => [item.payload.displayValue, 'Test R²']}
+                  formatter={(_val: any, _, item: any) => [`R² ${item.payload.displayValue}`, 'Test R²']}
                 />
                 <Bar dataKey="score" radius={[4, 4, 0, 0]}>
-                  {regChartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  {regChartData.map((d, i) => (
+                    <Cell key={i} fill={d.score < 0 ? '#ef4444' : COLORS[i % COLORS.length]} />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -179,7 +185,6 @@ export default function ExperimentsPage() {
         </div>
       )}
 
-      {/* Empty Chart Message if filter has no valid evaluation metrics */}
       {completed.length > 0 && classChartData.length === 0 && regChartData.length === 0 && (
         <div className="card" style={{ marginBottom: 24, padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
           No evaluation metrics available for the selected experiments.
@@ -201,6 +206,7 @@ export default function ExperimentsPage() {
                   <th>Status</th>
                   <th>Test Metric</th>
                   <th>CV Metric</th>
+                  <th>Fit / Quality</th>
                   <th>Size</th>
                   <th></th>
                 </tr>
@@ -224,6 +230,13 @@ export default function ExperimentsPage() {
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
                         {metricInfo.cvValue}
+                      </td>
+                      <td>
+                        {metricInfo.interpretation ? (
+                          <span className={`badge badge--${metricInfo.interpretation.badgeVariant}`}>
+                            {metricInfo.interpretation.rating}
+                          </span>
+                        ) : '—'}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                         {exp.model_size_bytes ? formatBytes(exp.model_size_bytes) : '—'}
@@ -253,29 +266,73 @@ export default function ExperimentsPage() {
                 {(() => {
                   const selMetric = formatExperimentMetric(selected);
                   return (
-                    <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 16 }}>
-                      <div className="stat-card">
-                        <div className="stat-card__label">{selMetric.label}</div>
-                        <div className="stat-card__value" style={{ fontSize: 20, color: 'var(--accent-success)' }}>
-                          {selMetric.value}
+                    <div>
+                      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 16 }}>
+                        <div className="stat-card">
+                          <div className="stat-card__label">{selMetric.label}</div>
+                          <div
+                            className="stat-card__value"
+                            style={{
+                              fontSize: 20,
+                              color: selMetric.interpretation?.isWorseThanBaseline
+                                ? 'var(--accent-error)'
+                                : 'var(--accent-success)',
+                            }}
+                          >
+                            {selMetric.value}
+                          </div>
+                        </div>
+
+                        {selMetric.secondaryLabel && selMetric.secondaryValue && (
+                          <div className="stat-card">
+                            <div className="stat-card__label">{selMetric.secondaryLabel}</div>
+                            <div className="stat-card__value" style={{ fontSize: 20 }}>
+                              {selMetric.secondaryValue}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="stat-card">
+                          <div className="stat-card__label">Duration</div>
+                          <div className="stat-card__value" style={{ fontSize: 16 }}>
+                            {selected.duration_seconds ? `${selected.duration_seconds.toFixed(2)}s` : '—'}
+                          </div>
                         </div>
                       </div>
 
-                      {selMetric.secondaryLabel && selMetric.secondaryValue && (
-                        <div className="stat-card">
-                          <div className="stat-card__label">{selMetric.secondaryLabel}</div>
-                          <div className="stat-card__value" style={{ fontSize: 20 }}>
-                            {selMetric.secondaryValue}
+                      {/* Regression Interpretation & Baseline Box */}
+                      {selMetric.taskType === 'regression' && selMetric.interpretation && (
+                        <div
+                          style={{
+                            background: selMetric.interpretation.isWorseThanBaseline
+                              ? 'rgba(239, 68, 68, 0.1)'
+                              : 'var(--bg-elevated)',
+                            border: `1px solid ${
+                              selMetric.interpretation.isWorseThanBaseline
+                                ? 'var(--accent-error)'
+                                : 'var(--border-secondary)'
+                            }`,
+                            padding: 12,
+                            borderRadius: 6,
+                            marginBottom: 16,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            {selMetric.interpretation.isWorseThanBaseline ? (
+                              <AlertTriangle size={16} color="var(--accent-error)" />
+                            ) : (
+                              <Info size={16} color="var(--accent-primary)" />
+                            )}
+                            <strong style={{ fontSize: 13 }}>{selMetric.interpretation.rating}</strong>
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                            {selMetric.interpretation.description}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+                            Baseline Predictor (Mean): R² 0.000
                           </div>
                         </div>
                       )}
-
-                      <div className="stat-card">
-                        <div className="stat-card__label">Duration</div>
-                        <div className="stat-card__value" style={{ fontSize: 16 }}>
-                          {selected.duration_seconds ? `${selected.duration_seconds.toFixed(2)}s` : '—'}
-                        </div>
-                      </div>
                     </div>
                   );
                 })()}

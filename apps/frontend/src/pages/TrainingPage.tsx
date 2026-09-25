@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../stores/appStore';
 import api from '../utils/api';
-import { formatExperimentMetric } from '../utils/metrics';
+import { formatExperimentMetric, getNegativeR2Explanation } from '../utils/metrics';
 import { Play, Wand2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 const ALGORITHMS = [
@@ -419,6 +419,24 @@ export default function TrainingPage() {
               {autoMLResult.summary.completed} / {autoMLResult.summary.total_models} models ({autoMLResult.summary.dataset_analysis?.detected_task} task)
             </span>
           </div>
+          <div className="card__body" style={{ paddingBottom: 0 }}>
+            {/* Non-blocking Model Quality Warning Banner */}
+            {autoMLResult.summary.model_quality_warning && (
+              <div style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid var(--accent-warning)', padding: 12, borderRadius: 6, marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <AlertTriangle size={18} color="var(--accent-warning)" style={{ flexShrink: 0, marginTop: 2 }} />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent-warning)' }}>
+                    {autoMLResult.summary.model_quality_warning}
+                  </div>
+                  {autoMLResult.summary.dataset_analysis?.detected_task === 'regression' && (
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                      {getNegativeR2Explanation()} Standard Mean Predictor Baseline R² = 0.000.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <div className="table-container">
             <table>
               <thead>
@@ -429,6 +447,7 @@ export default function TrainingPage() {
                   <th>{autoMLResult.summary.dataset_analysis?.detected_task === 'regression' ? 'Test R²' : 'Test Accuracy'}</th>
                   <th>{autoMLResult.summary.dataset_analysis?.detected_task === 'regression' ? 'CV R²' : 'CV Accuracy'}</th>
                   <th>{autoMLResult.summary.dataset_analysis?.detected_task === 'regression' ? 'RMSE' : 'F1 Score'}</th>
+                  <th>Fit / Quality</th>
                   <th>Model Size</th>
                   <th>Duration</th>
                 </tr>
@@ -449,6 +468,13 @@ export default function TrainingPage() {
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)' }}>
                         {mInfo.secondaryValue || '—'}
+                      </td>
+                      <td>
+                        {mInfo.interpretation ? (
+                          <span className={`badge badge--${mInfo.interpretation.badgeVariant}`}>
+                            {mInfo.interpretation.rating}
+                          </span>
+                        ) : '—'}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                         {r.model_size_bytes ? formatBytes(r.model_size_bytes) : '—'}

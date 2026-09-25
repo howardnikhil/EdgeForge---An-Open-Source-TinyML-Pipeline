@@ -1,22 +1,34 @@
 /**
- * Canonical Metric Formatter & Utilities for EdgeForge.
+ * Canonical Metric Formatter & Interpretation Utilities for EdgeForge.
  *
- * Ensures consistent, task-aware experiment metric handling, labels, and chart values
- * across ProjectDashboard, ExperimentsPage, TrainingPage, tables, tooltips, and cards.
+ * Ensures consistent, task-aware experiment metric handling, labels, interpretations,
+ * and chart values across ProjectDashboard, ExperimentsPage, TrainingPage, tables,
+ * tooltips, and cards.
  */
 
 export type TaskType = 'classification' | 'regression';
 
+export interface R2Interpretation {
+  rating: string;               // "Excellent predictive fit", "Worse than mean baseline", etc.
+  description: string;          // Human-readable explanation
+  badgeVariant: 'success' | 'warning' | 'error' | 'info';
+  isWorseThanBaseline: boolean;
+  isBaselineEquivalent: boolean;
+  helpNote?: string;
+}
+
 export interface FormattedMetric {
   taskType: TaskType;
-  label: string;          // e.g. "Test Accuracy" or "Test R²"
-  shortLabel: string;     // e.g. "Accuracy" or "R²"
-  value: string;          // e.g. "96.23%" or "R² 0.842" or "—"
-  plainValue: string;     // e.g. "96.23%" or "0.842"
-  raw: number | null;     // Raw float metric (e.g. 0.9623 or 0.842)
-  cvValue: string;        // e.g. "94.7% ± 2.1%" or "0.801 ± 0.044"
-  secondaryLabel?: string;// "F1 Score" or "RMSE"
-  secondaryValue?: string;// "0.958" or "2.130"
+  label: string;               // e.g. "Test Accuracy" or "Test R²"
+  shortLabel: string;          // e.g. "Accuracy" or "R²"
+  value: string;               // e.g. "96.23%" or "R² 0.842" or "—"
+  plainValue: string;          // e.g. "96.23%" or "0.842"
+  raw: number | null;          // Raw float metric (e.g. 0.9623 or 0.842)
+  cvValue: string;             // e.g. "94.7% ± 2.1%" or "0.801 ± 0.044"
+  secondaryLabel?: string;     // "F1 Score" or "RMSE"
+  secondaryValue?: string;     // "0.958" or "2.130"
+  interpretation?: R2Interpretation;
+  baselineR2?: number;
 }
 
 export interface ChartMetricPoint {
@@ -52,6 +64,84 @@ export function detectTaskType(exp: any): TaskType {
 }
 
 /**
+ * Canonical regression R² score interpretation helper.
+ */
+export function interpretR2(val: number | null | undefined): R2Interpretation {
+  if (val === null || val === undefined || isNaN(val) || !isFinite(val)) {
+    return {
+      rating: 'No metric data',
+      description: 'Evaluation metric is unavailable for this experiment.',
+      badgeVariant: 'info',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: false,
+    };
+  }
+
+  if (val >= 0.90) {
+    return {
+      rating: 'Excellent predictive fit',
+      description: 'Model explains over 90% of variance in the target variable.',
+      badgeVariant: 'success',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: false,
+    };
+  } else if (val >= 0.75) {
+    return {
+      rating: 'Strong predictive fit',
+      description: 'Model explains a high proportion of target variance.',
+      badgeVariant: 'success',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: false,
+    };
+  } else if (val >= 0.50) {
+    return {
+      rating: 'Moderate predictive fit',
+      description: 'Model captures moderate trends but has notable residual variance.',
+      badgeVariant: 'warning',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: false,
+    };
+  } else if (val >= 0.25) {
+    return {
+      rating: 'Weak predictive fit',
+      description: 'Model captures weak predictive signal over the baseline.',
+      badgeVariant: 'warning',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: false,
+    };
+  } else if (val > 0.001) {
+    return {
+      rating: 'Very weak predictive fit',
+      description: 'Marginal improvement over the mean target baseline predictor.',
+      badgeVariant: 'warning',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: false,
+    };
+  } else if (Math.abs(val) <= 0.001) {
+    return {
+      rating: 'No improvement over mean baseline',
+      description: 'Model predictions perform equivalent to constantly predicting the mean target value.',
+      badgeVariant: 'warning',
+      isWorseThanBaseline: false,
+      isBaselineEquivalent: true,
+    };
+  } else {
+    return {
+      rating: 'Worse than mean baseline',
+      description: 'Negative R² means the model performed worse on the test set than a baseline that always predicts the mean target value.',
+      badgeVariant: 'error',
+      isWorseThanBaseline: true,
+      isBaselineEquivalent: false,
+      helpNote: getNegativeR2Explanation(),
+    };
+  }
+}
+
+export function getNegativeR2Explanation(): string {
+  return 'Negative R² means the model performed worse on the test set than a baseline that always predicts the mean target value.';
+}
+
+/**
  * Format classification accuracy value into percentage representation.
  * E.g., 0.9623 -> "96.23%", 1.0 -> "100.00%".
  */
@@ -82,6 +172,7 @@ export function formatExperimentMetric(exp: any): FormattedMetric {
     const rawR2 = m.test_r2 ?? m.r2 ?? m.r2_score ?? null;
     const isValidR2 = rawR2 !== null && rawR2 !== undefined && !isNaN(rawR2) && isFinite(rawR2);
     const plainR2Str = isValidR2 ? formatR2(rawR2) : '—';
+    const interp = interpretR2(rawR2);
 
     let cvStr = '—';
     if (m.cv_r2_mean !== undefined && m.cv_r2_mean !== null && !isNaN(m.cv_r2_mean)) {
@@ -92,6 +183,7 @@ export function formatExperimentMetric(exp: any): FormattedMetric {
     }
 
     const rmseVal = m.rmse !== undefined && m.rmse !== null && !isNaN(m.rmse) ? m.rmse.toFixed(4) : undefined;
+    const baselineR2 = m.baseline?.test_r2 ?? m.baseline_r2 ?? 0.0;
 
     return {
       taskType: 'regression',
@@ -103,6 +195,8 @@ export function formatExperimentMetric(exp: any): FormattedMetric {
       cvValue: cvStr,
       secondaryLabel: 'RMSE',
       secondaryValue: rmseVal,
+      interpretation: interp,
+      baselineR2: baselineR2,
     };
   } else {
     const rawAcc = m.test_accuracy ?? m.accuracy ?? null;
@@ -159,7 +253,6 @@ export function prepareChartData(experiments: any[], targetTaskType?: TaskType):
 
     let chartScore = formatted.raw;
     if (taskType === 'classification') {
-      // Classification percentage scale for Recharts (0 to 100)
       chartScore = formatted.raw > 1.0 ? formatted.raw : formatted.raw * 100.0;
     }
 

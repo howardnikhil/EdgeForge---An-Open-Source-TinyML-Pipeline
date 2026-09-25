@@ -295,3 +295,63 @@ def validate_task_compatibility(
                     },
                 },
             )
+
+
+def analyze_regression_diagnostics(df: pd.DataFrame, target_column: str, X: pd.DataFrame, y: pd.Series) -> dict:
+    """Analyze target distribution, variance, near-zero variance features, and data distribution for regression."""
+    diagnostics = []
+
+    target_std = float(y.std()) if len(y) > 1 else 0.0
+    target_var = float(y.var()) if len(y) > 1 else 0.0
+    target_range = float(y.max() - y.min()) if len(y) > 0 else 0.0
+
+    if target_var < 1e-6 or target_std < 1e-4:
+        diagnostics.append("Target column has near-zero variance. Models will default to predicting the constant mean.")
+
+    near_zero_var_features = []
+    for col in X.columns:
+        if pd.api.types.is_numeric_dtype(X[col]):
+            v = float(X[col].var()) if len(X[col]) > 1 else 0.0
+            if v < 1e-6:
+                near_zero_var_features.append(col)
+
+    if near_zero_var_features:
+        diagnostics.append(f"{len(near_zero_var_features)} feature(s) have near-zero variance: {', '.join(near_zero_var_features[:3])}")
+
+    if len(df) < 50:
+        diagnostics.append(f"Small dataset size ({len(df)} samples). Regression model metrics may have high variance.")
+
+    return {
+        "target_std": round(target_std, 4),
+        "target_var": round(target_var, 4),
+        "target_range": round(target_range, 4),
+        "near_zero_var_features": near_zero_var_features,
+        "diagnostics": diagnostics,
+    }
+
+
+def interpret_r2_backend(r2: Optional[float]) -> dict:
+    """Canonical backend interpretation of R² score."""
+    if r2 is None or np.isnan(r2):
+        return {"rating": "No metric data", "is_worse_than_baseline": False, "category": "unknown"}
+
+    if r2 >= 0.90:
+        return {"rating": "Excellent predictive fit", "is_worse_than_baseline": False, "category": "excellent"}
+    elif r2 >= 0.75:
+        return {"rating": "Strong predictive fit", "is_worse_than_baseline": False, "category": "strong"}
+    elif r2 >= 0.50:
+        return {"rating": "Moderate predictive fit", "is_worse_than_baseline": False, "category": "moderate"}
+    elif r2 >= 0.25:
+        return {"rating": "Weak predictive fit", "is_worse_than_baseline": False, "category": "weak"}
+    elif r2 > 0.001:
+        return {"rating": "Very weak predictive fit", "is_worse_than_baseline": False, "category": "very_weak"}
+    elif abs(r2) <= 0.001:
+        return {"rating": "No improvement over mean baseline", "is_worse_than_baseline": False, "category": "baseline_equivalent"}
+    else:
+        return {
+            "rating": "Worse than mean baseline",
+            "is_worse_than_baseline": True,
+            "category": "worse_than_baseline",
+            "help_note": "Negative R² means the model performed worse on the test set than a baseline that always predicts the mean target value."
+        }
+

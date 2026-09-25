@@ -1,9 +1,13 @@
-"""Integration & Logic Tests for Task-Aware Metric Persistence, Dashboard & Chart Integrity."""
+"""Integration & Logic Tests for Task-Aware Metric Persistence, Interpretation, Baseline & Chart Integrity."""
 import os
 import sys
 import pytest
 import math
+import numpy as np
+import pandas as pd
 from httpx import AsyncClient, ASGITransport
+from sklearn.dummy import DummyRegressor
+from sklearn.metrics import r2_score
 
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "apps", "backend"))
 if backend_dir not in sys.path:
@@ -11,6 +15,7 @@ if backend_dir not in sys.path:
 
 from main import app
 from core.database import init_db
+from core.ml_validation import interpret_r2_backend
 
 @pytest.fixture(scope="module")
 def anyio_backend():
@@ -19,6 +24,22 @@ def anyio_backend():
 @pytest.fixture(autouse=True)
 async def prepare_db():
     await init_db()
+
+
+def test_r2_interpretation_thresholds():
+    """Verify canonical R² interpretation thresholds."""
+    assert interpret_r2_backend(1.0)["rating"] == "Excellent predictive fit"
+    assert interpret_r2_backend(0.92)["rating"] == "Excellent predictive fit"
+    assert interpret_r2_backend(0.84)["rating"] == "Strong predictive fit"
+    assert interpret_r2_backend(0.51)["rating"] == "Moderate predictive fit"
+    assert interpret_r2_backend(0.26)["rating"] == "Weak predictive fit"
+    assert interpret_r2_backend(0.11)["rating"] == "Very weak predictive fit"
+    assert interpret_r2_backend(0.0)["rating"] == "No improvement over mean baseline"
+    assert interpret_r2_backend(-0.5)["rating"] == "Worse than mean baseline"
+    assert interpret_r2_backend(-1.643)["rating"] == "Worse than mean baseline"
+
+    assert interpret_r2_backend(-1.643)["is_worse_than_baseline"] is True
+    assert "help_note" in interpret_r2_backend(-1.643)
 
 
 def test_metric_formatting_rules():
@@ -44,6 +65,28 @@ def test_metric_formatting_rules():
     assert format_accuracy(0.9623) == "96.23%"
     assert format_accuracy(1.0) == "100.00%"
     assert format_accuracy(0.0) == "0.00%"
+
+
+def test_baseline_fitting_no_leakage():
+    """Verify DummyRegressor baseline fits strictly on train set and tests on unseen test set."""
+    np.random.seed(42)
+    X_train = np.random.randn(80, 3)
+    y_train = np.random.randn(80) * 10 + 5.0  # Mean approx 5.0
+
+    X_test = np.random.randn(20, 3)
+    y_test = np.random.randn(20) * 10 + 12.0  # Slightly shifted mean on test set
+
+    dummy = DummyRegressor(strategy="mean")
+    dummy.fit(X_train, y_train)
+
+    # Predictions on test set must equal y_train mean (approx 5.0)
+    y_pred_dummy = dummy.predict(X_test)
+    assert np.allclose(y_pred_dummy, y_train.mean())
+
+    # Baseline R2 evaluated on test set
+    base_r2 = r2_score(y_test, y_pred_dummy)
+    # Since test set mean is shifted, base_r2 <= 0.0
+    assert base_r2 <= 0.05
 
 
 def test_dashboard_best_metric_aggregation():

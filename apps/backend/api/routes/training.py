@@ -23,6 +23,7 @@ from core.ml_validation import (
     inspect_dataset_target, validate_task_compatibility,
     calculate_cv_folds, check_stratification_possibility,
     analyze_dataset_size, analyze_class_balance, detect_duplicates_and_leakage,
+    analyze_regression_diagnostics, interpret_r2_backend,
 )
 
 router = APIRouter()
@@ -231,12 +232,34 @@ def _train_model_sync(
             metrics["cv_accuracy_std"] = round(cv_std, 4) if cv_std is not None else 0.0
             metrics["cv_folds"] = cv_folds
     else:
+        from sklearn.dummy import DummyRegressor
+        dummy = DummyRegressor(strategy="mean")
+        dummy.fit(X_train, y_train)
+        y_test_dummy = dummy.predict(X_test)
+
+        b_r2 = float(r2_score(y_test, y_test_dummy))
+        b_mae = float(mean_absolute_error(y_test, y_test_dummy))
+        b_mse = float(mean_squared_error(y_test, y_test_dummy))
+        b_rmse = float(np.sqrt(b_mse))
+
         metrics["mae"] = float(mean_absolute_error(y_test, y_test_pred))
         metrics["mse"] = float(mean_squared_error(y_test, y_test_pred))
         metrics["rmse"] = float(np.sqrt(metrics["mse"]))
         metrics["r2"] = float(r2_score(y_test, y_test_pred))
         metrics["test_r2"] = metrics["r2"]
         metrics["train_r2"] = float(r2_score(y_train, y_train_pred))
+
+        metrics["baseline_r2"] = b_r2
+        metrics["baseline_mae"] = b_mae
+        metrics["baseline_rmse"] = b_rmse
+        metrics["baseline"] = {
+            "type": "mean",
+            "test_r2": b_r2,
+            "test_mae": b_mae,
+            "test_rmse": b_rmse,
+        }
+        metrics["r2_interpretation"] = interpret_r2_backend(metrics["r2"])
+        metrics["regression_diagnostics"] = analyze_regression_diagnostics(df, target_column, X, y)
 
         if cv_mean is not None:
             metrics["cv_r2_mean"] = round(cv_mean, 4)
@@ -595,5 +618,18 @@ async def run_automl(req: AutoMLRequest, session: AsyncSession = Depends(get_ses
         best = completed[0]
         summary["best_accuracy" if active_task_type == "classification" else "best_r2"] = best
         summary["smallest_model"] = min(completed, key=lambda x: x["model_size_bytes"])
+
+        if active_task_type == "regression":
+            best_r2 = best["metrics"].get("test_r2", best["metrics"].get("r2"))
+            summary["baseline"] = best["metrics"].get("baseline", {"type": "mean", "test_r2": 0.0})
+            if best_r2 is not None:
+                if best_r2 < 0:
+                    summary["model_quality_warning"] = "No candidate model outperformed the mean baseline on the held-out test set."
+                elif best_r2 < 0.25:
+                    summary["model_quality_warning"] = "Best model shows weak predictive performance on the held-out test set."
+                elif best_r2 < 0.50:
+                    summary["model_quality_warning"] = "Only marginal improvement over baseline."
+                else:
+                    summary["model_quality_warning"] = None
 
     return {"summary": summary, "results": results}
