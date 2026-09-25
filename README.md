@@ -177,10 +177,10 @@ pytest ../../tests/backend/test_api.py ../../tests/backend/test_real_embedded_pi
 
 ## 📄 License
 
-Distributed under the **MIT License**. See `LICENSE` for more details.
+Distributed under the **Apache License 2.0**. See `LICENSE` for more details.
 
 ---
 
 <div align="center">
-  <b>Developed by HowNik</b> • <i>Open-Source TinyML for Everyone</i>
+  <b>Developed by Howard Nikhil</b> • <i>Open-Source TinyML for Everyone</i>
 </div>
