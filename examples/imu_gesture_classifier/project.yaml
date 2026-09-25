@@ -1,0 +1,20 @@
+name: IMU Gesture Classifier
+description: Canonical 6-axis IMU gesture classification model for ESP32 and embedded targets.
+type: sensor
+version: 0.1.0
+created: '2026-09-24T19:15:00Z'
+edgeforge_version: 0.1.0
+sensor:
+  name: 6-Axis IMU (MPU6050)
+  sample_rate_hz: 50.0
+  features:
+    - acc_x
+    - acc_y
+    - acc_z
+    - gyro_x
+    - gyro_y
+    - gyro_z
+  classes:
+    - idle
+    - wave
+    - shake

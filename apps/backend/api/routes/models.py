@@ -1,0 +1,203 @@
+"""Model management and export API."""
+import os
+import pickle
+import numpy as np
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.database import get_session
+from models.db_models import Model, Experiment
+
+router = APIRouter()
+
+
+class QuantizeRequest(BaseModel):
+    experiment_id: str
+    target_type: str = "int8"  # int8, fp16
+
+
+class CompatibilityRequest(BaseModel):
+    experiment_id: str
+    hardware_id: str
+
+
+@router.get("")
+async def list_models(project_id: str, session: AsyncSession = Depends(get_session)):
+    result = await session.execute(
+        select(Model, Experiment)
+        .join(Experiment, Model.experiment_id == Experiment.id)
+        .where(Experiment.project_id == project_id)
+    )
+    rows = result.all()
+    return [
+        {
+            "id": m.id, "name": m.name, "format": m.format,
+            "size_bytes": m.size_bytes, "quantization": m.quantization,
+            "input_shape": m.input_shape, "output_shape": m.output_shape,
+            "experiment_id": m.experiment_id,
+            "algorithm": e.algorithm, "metrics": e.metrics,
+        }
+        for m, e in rows
+    ]
+
+
+@router.get("/{model_id}")
+async def get_model(model_id: str, session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(Model).where(Model.id == model_id))
+    model = result.scalar_one_or_none()
+    if not model:
+        raise HTTPException(404, "Model not found")
+
+    return {
+        "id": model.id, "name": model.name, "format": model.format,
+        "path": model.path, "size_bytes": model.size_bytes,
+        "input_shape": model.input_shape, "output_shape": model.output_shape,
+        "quantization": model.quantization, "metadata": model.metadata_extra,
+    }
+
+
+@router.post("/export-onnx")
+async def export_onnx(experiment_id: str, session: AsyncSession = Depends(get_session)):
+    """Export a trained scikit-learn model to ONNX format."""
+    result = await session.execute(select(Experiment).where(Experiment.id == experiment_id))
+    exp = result.scalar_one_or_none()
+    if not exp:
+        raise HTTPException(404, "Experiment not found")
+
+    if not exp.model_path or not os.path.exists(exp.model_path):
+        raise HTTPException(404, "Model file not found")
+
+    try:
+        import onnx
+        from skl2onnx import to_onnx
+    except ImportError:
+        raise HTTPException(500, "ONNX export requires 'onnx' and 'skl2onnx' packages. Install with: pip install onnx skl2onnx")
+
+    # Load sklearn model
+    with open(exp.model_path, "rb") as f:
+        data = pickle.load(f)
+
+    sklearn_model = data["model"]
+    n_features = exp.input_shape[0] if exp.input_shape else 1
+
+    # Create sample input for shape inference
+    X_sample = np.zeros((1, n_features), dtype=np.float32)
+
+    # Convert to ONNX
+    onnx_path = exp.model_path.replace(".pkl", ".onnx")
+    try:
+        onnx_model = to_onnx(sklearn_model, X_sample)
+        with open(onnx_path, "wb") as f:
+            f.write(onnx_model.SerializeToString())
+    except Exception as e:
+        raise HTTPException(500, f"ONNX conversion failed: {str(e)}")
+
+    onnx_size = os.path.getsize(onnx_path)
+
+    # Create model record
+    model_record = Model(
+        experiment_id=experiment_id,
+        name=f"{exp.name}_onnx",
+        format="onnx",
+        path=onnx_path,
+        size_bytes=onnx_size,
+        input_shape=exp.input_shape,
+        output_shape=exp.output_shape,
+    )
+    session.add(model_record)
+    await session.commit()
+    await session.refresh(model_record)
+
+    return {
+        "id": model_record.id,
+        "format": "onnx",
+        "path": onnx_path,
+        "size_bytes": onnx_size,
+        "original_size_bytes": exp.model_size_bytes,
+    }
+
+
+@router.post("/export-c-array")
+async def export_c_array(experiment_id: str, session: AsyncSession = Depends(get_session)):
+    """Export model as C array for direct MCU embedding."""
+    result = await session.execute(select(Experiment).where(Experiment.id == experiment_id))
+    exp = result.scalar_one_or_none()
+    if not exp:
+        raise HTTPException(404, "Experiment not found")
+
+    # Look for ONNX model first
+    onnx_path = exp.model_path.replace(".pkl", ".onnx") if exp.model_path else None
+    source_path = None
+    if onnx_path and os.path.exists(onnx_path):
+        source_path = onnx_path
+    elif exp.model_path and os.path.exists(exp.model_path):
+        # Try to generate ONNX first
+        raise HTTPException(400, "Export to ONNX first using /export-onnx endpoint")
+
+    if not source_path:
+        raise HTTPException(404, "No exportable model found")
+
+    # Read binary and convert to C array
+    with open(source_path, "rb") as f:
+        model_bytes = f.read()
+
+    c_array_lines = ["// Auto-generated by HowNik's EdgeForge",
+                     f"// Model: {exp.name}",
+                     f"// Algorithm: {exp.algorithm}",
+                     f"// Size: {len(model_bytes)} bytes",
+                     f"// Input shape: {exp.input_shape}",
+                     f"// Output shape: {exp.output_shape}",
+                     "",
+                     "#include <stdint.h>",
+                     "",
+                     f"const unsigned int model_data_len = {len(model_bytes)};",
+                     f"alignas(16) const uint8_t model_data[] = {{"]
+
+    # Format bytes as hex
+    for i in range(0, len(model_bytes), 16):
+        chunk = model_bytes[i:i+16]
+        hex_str = ", ".join(f"0x{b:02x}" for b in chunk)
+        c_array_lines.append(f"    {hex_str},")
+
+    c_array_lines.append("};")
+
+    c_path = source_path.replace(".onnx", "_model.h")
+    with open(c_path, "w") as f:
+        f.write("\n".join(c_array_lines))
+
+    c_size = os.path.getsize(c_path)
+
+    model_record = Model(
+        experiment_id=experiment_id,
+        name=f"{exp.name}_c_array",
+        format="c_array",
+        path=c_path,
+        size_bytes=c_size,
+        input_shape=exp.input_shape,
+        output_shape=exp.output_shape,
+    )
+    session.add(model_record)
+    await session.commit()
+
+    return {
+        "id": model_record.id,
+        "format": "c_array",
+        "path": c_path,
+        "size_bytes": c_size,
+        "model_data_bytes": len(model_bytes),
+    }
+
+
+@router.get("/{model_id}/download")
+async def download_model(model_id: str, session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(Model).where(Model.id == model_id))
+    model = result.scalar_one_or_none()
+    if not model:
+        raise HTTPException(404, "Model not found")
+    if not os.path.exists(model.path):
+        raise HTTPException(404, "Model file not found on disk")
+
+    return FileResponse(model.path, filename=os.path.basename(model.path))
