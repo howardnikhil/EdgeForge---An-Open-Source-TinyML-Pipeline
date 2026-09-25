@@ -8,13 +8,25 @@ import json
 import numpy as np
 
 
+def _extract_pipeline_components(model):
+    """Extract scaler and underlying scikit-learn estimator from Pipeline if present."""
+    scaler = None
+    estimator = model
+    if hasattr(model, "named_steps"):
+        scaler = model.named_steps.get("scaler")
+        estimator = model.named_steps.get("model", model.named_steps.get("classifier", model.named_steps.get("regressor", model)))
+    elif hasattr(model, "steps") and len(model.steps) > 0:
+        for name, step in model.steps:
+            if hasattr(step, "mean_") and hasattr(step, "scale_"):
+                scaler = step
+        estimator = model.steps[-1][1]
+    return scaler, estimator
+
+
 def _unwrap_estimator(model):
     """Unwrap underlying scikit-learn estimator if wrapped inside a Pipeline."""
-    if hasattr(model, "named_steps") and "model" in model.named_steps:
-        return model.named_steps["model"]
-    if hasattr(model, "steps") and len(model.steps) > 0:
-        return model.steps[-1][1]
-    return model
+    _, estimator = _extract_pipeline_components(model)
+    return estimator
 
 
 def generate_c_decision_tree(tree, feature_names=None, class_labels=None) -> str:
@@ -61,6 +73,12 @@ def generate_c_decision_tree(tree, feature_names=None, class_labels=None) -> str
 
     code.append("static inline int evaluate_tree(const float* features, float* probs) {")
     code.append(recurse(0, 1))
+    code.append("}")
+    code.append("")
+    code.append("static inline int predict_sample(const float* raw_features, float* probabilities) {")
+    code.append("  float features[NUM_FEATURES];")
+    code.append("  apply_feature_scaling(raw_features, features);")
+    code.append("  return evaluate_tree(features, probabilities);")
     code.append("}")
     code.append("")
     return "\n".join(code)
@@ -116,7 +134,9 @@ def generate_c_random_forest(model, feature_names=None, class_labels=None) -> st
         code.append("}")
         code.append("")
         
-    code.append("static inline int predict_sample(const float* features, float* probabilities) {")
+    code.append("static inline int predict_sample(const float* raw_features, float* probabilities) {")
+    code.append("  float features[NUM_FEATURES];")
+    code.append("  apply_feature_scaling(raw_features, features);")
     code.append(f"  for (int i = 0; i < {n_classes}; i++) probabilities[i] = 0.0f;")
     code.append("  float tree_probs[NUM_CLASSES];")
     for idx in range(n_estimators):
@@ -152,20 +172,45 @@ def generate_embedded_firmware_project(
     os.makedirs(os.path.join(output_dir, "src"), exist_ok=True)
     os.makedirs(os.path.join(output_dir, "include"), exist_ok=True)
     
-    model = _unwrap_estimator(model)
+    scaler, estimator = _extract_pipeline_components(model)
+
+    if scaler is not None and hasattr(scaler, "mean_") and hasattr(scaler, "scale_"):
+        means_str = ", ".join([f"{float(m):.6f}f" for m in scaler.mean_])
+        stds_str = ", ".join([f"{float(s) if s != 0 else 1.0:.6f}f" for s in scaler.scale_])
+        scaler_c = f"""#define EDGEFORGE_USE_SCALER 1
+static const float SCALER_MEAN[{n_features}] = {{ {means_str} }};
+static const float SCALER_STD[{n_features}] = {{ {stds_str} }};
+
+static inline void apply_feature_scaling(const float* raw_features, float* scaled_features) {{
+    for (int i = 0; i < {n_features}; i++) {{
+        float std_val = SCALER_STD[i] == 0.0f ? 1.0f : SCALER_STD[i];
+        scaled_features[i] = (raw_features[i] - SCALER_MEAN[i]) / std_val;
+    }}
+}}
+"""
+    else:
+        scaler_c = f"""#define EDGEFORGE_USE_SCALER 0
+static inline void apply_feature_scaling(const float* raw_features, float* scaled_features) {{
+    for (int i = 0; i < {n_features}; i++) {{
+        scaled_features[i] = raw_features[i];
+    }}
+}}
+"""
 
     if algorithm in ("decision_tree", "random_forest"):
-        if hasattr(model, "estimators_"):
-            inference_c = generate_c_random_forest(model, class_labels=class_labels)
+        if hasattr(estimator, "estimators_"):
+            inference_c = generate_c_random_forest(estimator, class_labels=class_labels)
         else:
-            inference_c = generate_c_decision_tree(model, class_labels=class_labels)
+            inference_c = generate_c_decision_tree(estimator, class_labels=class_labels)
     else:
         n_classes = len(class_labels) if class_labels else 2
         inference_c = f"""
 #define NUM_FEATURES {n_features}
 #define NUM_CLASSES {n_classes}
 
-static inline int predict_sample(const float* features, float* probabilities) {{
+static inline int predict_sample(const float* raw_features, float* probabilities) {{
+    float features[NUM_FEATURES];
+    apply_feature_scaling(raw_features, features);
     for (int i = 0; i < NUM_CLASSES; i++) probabilities[i] = 1.0f / NUM_CLASSES;
     return 0;
 }}
@@ -184,6 +229,8 @@ static inline int predict_sample(const float* features, float* probabilities) {{
 #define EDGEFORGE_NUM_CLASSES {len(class_labels) if class_labels else 2}
 
 static const char* CLASS_LABELS[] = {{ {labels_str} }};
+
+{scaler_c}
 
 {inference_c}
 

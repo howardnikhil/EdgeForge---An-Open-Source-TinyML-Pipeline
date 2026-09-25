@@ -10,6 +10,14 @@
 
 static const char* CLASS_LABELS[] = { "class_0", "class_1" };
 
+#define EDGEFORGE_USE_SCALER 0
+static inline void apply_feature_scaling(const float* raw_features, float* scaled_features) {
+    for (int i = 0; i < 2; i++) {
+        scaled_features[i] = raw_features[i];
+    }
+}
+
+
 // Auto-generated C Random Forest Inference Engine
 #define NUM_ESTIMATORS 3
 #define NUM_FEATURES 2
@@ -45,7 +53,9 @@ static inline void evaluate_forest_tree_2(const float* features, float* probs) {
   }
 }
 
-static inline int predict_sample(const float* features, float* probabilities) {
+static inline int predict_sample(const float* raw_features, float* probabilities) {
+  float features[NUM_FEATURES];
+  apply_feature_scaling(raw_features, features);
   for (int i = 0; i < 2; i++) probabilities[i] = 0.0f;
   float tree_probs[NUM_CLASSES];
   for (int i = 0; i < NUM_CLASSES; i++) tree_probs[i] = 0.0f;
